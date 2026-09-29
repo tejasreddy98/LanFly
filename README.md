@@ -14,7 +14,7 @@ Aaron Witzel - asy3fx
 
 **Problem Space:**
 
-We aim to create and compare prediction models on Lantern Fly population in the US given a set of predictor variables.
+We aim to create and compare prediction models on Lantern Fly population in the US given a set of predictor variables describing the environment of these Lantern Flys to determine which factors affect their growth in population the most.
 The predictor variables we will be using are:
 
 - Latitude
