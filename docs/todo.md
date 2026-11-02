@@ -19,5 +19,6 @@ Each item: question --> chart(s) --> decision/problem it helps solve. (We'll nee
 - [ ] **6. Seasonality**: when in the year are SLF seen, by latitude? --> sightings by month/year --> which climate months matter; year vs. season time step
 - [ ] **7. Data quality sensitivity**: do results change when dropping obscured or low-accuracy coordinates? --> county counts under different cutoffs --> cleaning thresholds
 - [ ] **8. Spatial clustering**: are neighboring counties similar? --> county vs. neighbor-average scatter --> validation design (spatial/temporal holdout)
+- [ ] **9. Assign Host-Plants to  counties**--> map county to known vegetations and do another effort analysis to look at proportion of vegetations and how they change with lanternfly observations. Help to determine if this is a feature we want to include in our model
 
 **Order:** 1–3 decide the response variable (first model due 10/30); 4–6 inform predictors; 7–8 shape cleaning and validation.
