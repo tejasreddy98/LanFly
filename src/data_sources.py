@@ -6,6 +6,7 @@ when a file is missing (or refresh=True).
 """
 
 from pathlib import Path
+import re
 import time
 import unicodedata
 
@@ -291,3 +292,99 @@ def _norm_county_name(name):
     for drop in (" city", " county", " parish", " borough", " census area", ".", "'", "-", " "):
         n = n.replace(drop, "")
     return n
+
+
+# ---------------------------------------------------------------------------
+# lydemapr: compiled SLF survey data, 2014-2021 (Zenodo 7976229)
+# ---------------------------------------------------------------------------
+# Unlike iNaturalist, includes surveyed absences ("Unpopulated"), an
+# establishment flag, and an ordinal density category. Part of it IS
+# iNaturalist (source == "inat"); drop those rows for an independent comparison.
+
+LYDE_URL = "https://zenodo.org/records/7976229/files/{name}?download=1"
+LYDE_DENSITY = ["Unpopulated", "Low", "Medium", "High"]
+
+
+def load_lyde(grid="points", refresh=False):
+    """Return lydemapr survey records. grid="points" (lyde.csv) or "10k" (10 km grid)."""
+    name = "lyde.csv" if grid == "points" else "lyde_10k.csv"
+    path = RAW / f"lydemapr_{name}"
+    _download(LYDE_URL.format(name=name), path, refresh)
+    df = pd.read_csv(path, dtype={"lyde_established": "boolean"} if grid == "points" else None, low_memory=False)
+    df["lyde_density"] = pd.Categorical(df["lyde_density"], categories=LYDE_DENSITY, ordered=True)
+    return df
+
+
+# ---------------------------------------------------------------------------
+# Host plants
+# ---------------------------------------------------------------------------
+# 1) USFS FIA (EVALIDator API): design-based estimates of live trees (>=1 in.
+#    diameter) on FOREST LAND by county and species, from the most recent
+#    statewide evaluation. A single snapshot per state, so treat as static.
+#    Under-represents Tree of Heaven, which favors roadsides, rail lines and
+#    other non-forest disturbed ground.
+# 2) GBIF Tree of Heaven sightings per county-year (use fetch_gbif_county_counts
+#    with GBIF_TOH_TAXON_KEY): covers non-forest land but is presence-only.
+
+FIA_API = "https://apps.fs.usda.gov/fiadb-api/fullreport"
+GBIF_TOH_TAXON_KEY = 3190653  # Ailanthus altissima (checked via /species/match)
+
+# FIA species codes (SPCD) for SLF hosts; Tree of Heaven is the primary host.
+FIA_HOSTS = {
+    341: "tree_of_heaven",
+    602: "black_walnut",
+    313: "maple", 314: "maple", 315: "maple", 316: "maple", 317: "maple",
+    318: "maple", 319: "maple", 320: "maple", 321: "maple", 322: "maple",
+}
+FIA_HOSTS.update({c: "willow" for c in range(920, 930)})
+
+
+def fetch_fia_hosts(refresh=False):
+    """Return county-level FIA live-tree estimates for SLF host groups (lower 48).
+
+    Columns: fips, eval_grp, host, trees, se, plots, all_trees (all species), host_share.
+    Counties with forest plots but no host trees get trees = 0.
+    """
+    path = RAW / "fia_county_species.csv"
+    if path.exists() and not refresh:
+        raw = pd.read_csv(path, dtype={"fips": str})
+    else:
+        frames = []
+        with requests.Session() as s:
+            for statecd, grp in _fia_latest_eval_groups(s).items():
+                params = {"snum": 4, "wc": grp, "rselected": "County code and name",
+                          "cselected": "Species", "outputFormat": "NJSON"}
+                est = _get_with_retry(s, FIA_API, params)["estimates"]
+                df = pd.DataFrame(est)
+                df["fips"] = df["GRP1"].str.strip("`").str.split().str[0].str.zfill(5)
+                df["spcd"] = df["GRP2"].str.strip("`").str.split().str[0].astype(int)
+                df["eval_grp"] = grp
+                frames.append(df[["fips", "spcd", "eval_grp", "ESTIMATE", "SE", "PLOT_COUNT"]])
+                print(f"state {statecd:02d} ({grp}): {df['fips'].nunique()} counties", flush=True)
+        raw = pd.concat(frames, ignore_index=True)
+        raw.to_csv(path, index=False)
+
+    raw = raw.rename(columns={"ESTIMATE": "trees", "SE": "se", "PLOT_COUNT": "plots"})
+    all_trees = raw.groupby("fips")["trees"].sum().rename("all_trees")
+    hosts = raw[raw["spcd"].isin(FIA_HOSTS)].assign(host=lambda d: d["spcd"].map(FIA_HOSTS))
+    # SEs within a host group are combined assuming independence (an approximation).
+    agg = (hosts.groupby(["fips", "host"])
+                .agg(trees=("trees", "sum"), se=("se", lambda s: (s ** 2).sum() ** 0.5), plots=("plots", "max"))
+                .reset_index())
+    grid = pd.MultiIndex.from_product([all_trees.index, sorted(set(FIA_HOSTS.values()))], names=["fips", "host"])
+    out = (agg.set_index(["fips", "host"]).reindex(grid).fillna({"trees": 0.0, "se": 0.0, "plots": 0})
+              .reset_index().merge(all_trees, on="fips")
+              .merge(raw.groupby("fips")["eval_grp"].first(), on="fips"))
+    out["host_share"] = out["trees"] / out["all_trees"]
+    return out
+
+
+LOWER48_STATECD = [int(f) for f in NCDC_TO_FIPS.values()]
+
+
+def _fia_latest_eval_groups(session):
+    """Most recent FIA evaluation group (e.g. 422025) per lower-48 state."""
+    html = session.get(f"{FIA_API}/parameters/wc", timeout=120).text
+    rows = [re.findall(r"<td>(.*?)</td>", r) for r in html.split("</tr>")]
+    latest = {int(r[0]): int(r[2]) for r in rows if len(r) == 7 and r[6] == "Y"}
+    return {sc: latest[sc] for sc in LOWER48_STATECD if sc in latest}

@@ -7,3 +7,5 @@ matplotlib
 scikit-learn
 jupyter
 ipykernel
+scipy
+statsmodels
