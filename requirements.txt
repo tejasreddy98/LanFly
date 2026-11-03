@@ -4,5 +4,6 @@ pyarrow
 requests
 geopandas
 matplotlib
+scikit-learn
 jupyter
 ipykernel

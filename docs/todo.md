@@ -22,3 +22,15 @@ Each item: question --> chart(s) --> decision/problem it helps solve. (We'll nee
 - [ ] **9. Assign Host-Plants to  counties**--> map county to known vegetations and do another effort analysis to look at proportion of vegetations and how they change with lanternfly observations. Help to determine if this is a feature we want to include in our model
 
 **Order:** 1–3 decide the response variable (first model due 10/30); 4–6 inform predictors; 7–8 shape cleaning and validation.
+
+
+## Modeling ToDos (`notebooks/03_regularized_regression.ipynb`)
+
+Preliminary Ridge / Lasso / Elastic Net on `log1p(slf_obs)` with log effort as a predictor; invasion region, county-years with ≥200 observations; train 2015–2022, test 2023–2025.
+
+- [ ] Team interpretation written for each section (cells marked `_TODO_`)
+- [ ] Decide whether feature set B's spread feature (last year's count) belongs in the final model (README Open Decision 6)
+- [ ] Feature set A chose no penalty (alpha at the bottom of the grid): discuss whether regularization is needed for these predictors, or only once more features are added
+- [ ] Try a regularized Poisson / negative binomial model on `slf_obs` with log effort as a comparison; also a two-part model for the zeros (88% of county-years)
+- [ ] Revisit the EDA 1b note: the log-log slope is about 0.51, so an effort *offset* (which fixes the slope at 1) isn't supported. Bears on the response-variable decision in EDA section 1.
+- [ ] Add a spatial holdout (e.g., hold out states) alongside the temporal one

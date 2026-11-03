@@ -97,4 +97,4 @@ python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 .venv/bin/jupyter lab notebooks/01_data_loading.ipynb
 ```
-The first run downloads the data into `data/raw/` (about 10 minutes, mostly the iNaturalist API). Later runs use the cached files. AI usage is logged in [`docs/ai_usage.md`](docs/ai_usage.md).
+Run the notebooks in order: `01_data_loading` (data), `02_eda` (EDA), then `03_regularized_regression` (first model). The first run downloads the data into `data/raw/` (about 10 minutes, mostly the iNaturalist API). Later runs use the cached files. AI usage is logged in [`docs/ai_usage.md`](docs/ai_usage.md).
