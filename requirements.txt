@@ -9,3 +9,4 @@ jupyter
 ipykernel
 scipy
 statsmodels
+xlrd

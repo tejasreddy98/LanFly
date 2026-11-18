@@ -12,6 +12,7 @@ Written explanations/interpretations/reflections are done by hand.
 | 2026-11-03 | Claude Code (Claude Opus 5.5) | Preliminary regularized regression (Ridge / Lasso / Elastic Net) | `notebooks/03_regularized_regression.ipynb`, `requirements.txt` (added scikit-learn) | See below |
 | 2026-11-03 | Claude Code (Claude Opus 5.5) | lydemapr survey loader; iNaturalist vs. field-survey comparison (EDA 02b) | `src/data_sources.py` (lydemapr section), `notebooks/02b_inat_vs_lydemapr.ipynb`, `requirements.txt` (added scipy, statsmodels) | See below |
 | 2026-11-03 | Claude Code (Claude Opus 5.5) | FIA host-tree and GBIF Tree of Heaven loaders; host-plant EDA (02c) | `src/data_sources.py` (host plants section), `notebooks/02c_host_plants.ipynb` | See below |
+| 2026-11-17 | Claude Code (Claude Opus 5.5) | County categorical features: rural-urban codes, EPA ecoregions, interstates, rail, Census division (EDA 02d) | `src/data_sources.py` (county features section), `notebooks/02d_county_features.ipynb`, `requirements.txt` (added xlrd) | See below |
 
 ## Verification: 2026-10-27 data loading
 - **iNaturalist:** 98,859 rows vs. 98,856 from the API's `total_results` at the start (3 new sightings during the download); 0 duplicate IDs. The first attempt died silently at 23,800 rows, so the download was made resumable with retries.
@@ -54,6 +55,14 @@ Written explanations/interpretations/reflections are done by hand.
 - **Run:** both notebooks executed end to end in the project `.venv` (Python 3.14) with no errors.
 - **Interpretation** cells are left for the team.
 
+## Verification: 2026-11-17 county features (02d)
+- **Sources checked before use:** every download URL was tested; the USDA plant hardiness zone file was unavailable (404) and was dropped, since it would largely duplicate winter temperature.
+- **Rural-urban codes:** 8 counties were missing after the join, all in Connecticut, because the 2023 file uses CT's new planning regions. Filled from the 2013 edition (population 2010) and flagged in `rucc_source`. Final table has no missing values (3,108 lower-48 counties).
+- **Spot checks:** Manhattan, Arlington and DC are code 1 (large metro) with interstates and rail; Berks County, PA is code 2 in the Ridge and Valley ecoregion.
+- **Geometry:** lengths and areas computed in CONUS Albers (EPSG:5070). Ecoregion boundaries simplified at 500 m before taking each county's largest-area ecoregion.
+- **Finding flagged in the notebook:** Level I ecoregion has only 2 testable groups in the invasion region, so Level III is the usable version.
+- **Run:** executed end to end in the project `.venv` with no errors. Interpretation cells left for the team.
+
 ## Prompts
 Prompts were given conversationally in Claude Code. Key requests:
 1. "Given that description, what other questions need to be answered to define the project scope and objectives?"
@@ -64,3 +73,4 @@ Prompts were given conversationally in Claude Code. Key requests:
 6. Planning summaries from two other Claude chats (first-model planning; lanternfly data sources and modeling notes) were pasted in and condensed. Decisions made by the team from them: keep everything in Python, compare iNaturalist with lydemapr, and predict population numbers rather than classification.
 7. "Compare inaturalist data with lydemapr for now."
 8. "Can we get host plant data as well?"
+9. "Let's get a few more categorical features in the set."

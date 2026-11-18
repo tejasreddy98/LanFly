@@ -388,3 +388,115 @@ def _fia_latest_eval_groups(session):
     rows = [re.findall(r"<td>(.*?)</td>", r) for r in html.split("</tr>")]
     latest = {int(r[0]): int(r[2]) for r in rows if len(r) == 7 and r[6] == "Y"}
     return {sc: latest[sc] for sc in LOWER48_STATECD if sc in latest}
+
+
+# ---------------------------------------------------------------------------
+# County categorical features (static): urbanization, ecoregion, transport
+# ---------------------------------------------------------------------------
+
+RUCC_URL = "https://ers.usda.gov/sites/default/files/_laserfiche/DataFiles/53251/Ruralurbancontinuumcodes2023.csv"
+RUCC_2013_URL = "https://ers.usda.gov/sites/default/files/_laserfiche/DataFiles/53251/ruralurbancodes2013.xls"
+ECO_L3_URL = "https://dmap-prod-oms-edc.s3.us-east-1.amazonaws.com/ORD/Ecoregions/us/us_eco_l3.zip"
+ROADS_URL = "https://www2.census.gov/geo/tiger/TIGER2023/PRIMARYROADS/tl_2023_us_primaryroads.zip"
+RAILS_URL = "https://www2.census.gov/geo/tiger/TIGER2023/RAILS/tl_2023_us_rails.zip"
+EQUAL_AREA = "EPSG:5070"  # CONUS Albers: areas in m², lengths in m
+
+# Census divisions by state FIPS
+CENSUS_DIVISION = {
+    **dict.fromkeys(["09", "23", "25", "33", "44", "50"], "New England"),
+    **dict.fromkeys(["34", "36", "42"], "Middle Atlantic"),
+    **dict.fromkeys(["17", "18", "26", "39", "55"], "East North Central"),
+    **dict.fromkeys(["19", "20", "27", "29", "31", "38", "46"], "West North Central"),
+    **dict.fromkeys(["10", "11", "12", "13", "24", "37", "45", "51", "54"], "South Atlantic"),
+    **dict.fromkeys(["01", "21", "28", "47"], "East South Central"),
+    **dict.fromkeys(["05", "22", "40", "48"], "West South Central"),
+    **dict.fromkeys(["04", "08", "16", "30", "32", "35", "49", "56"], "Mountain"),
+    **dict.fromkeys(["02", "06", "15", "41", "53"], "Pacific"),
+}
+
+
+def load_county_features(refresh=False):
+    """Return one row per lower-48 county with categorical and transport features.
+
+    Categorical: census_division, rucc_2023 (1-9) / metro (Metro, Nonmetro),
+    ecoregion_l3 / ecoregion_l1 (largest share of county area), has_interstate, has_rail.
+    Numeric: pop_2020, pop_density_km2, interstate_km_per_km2, rail_km_per_km2.
+    """
+    path = PROCESSED / "county_features.parquet"
+    if path.exists() and not refresh:
+        return pd.read_parquet(path)
+
+    counties = load_counties()
+    counties = counties[~counties["state"].isin(["AK", "HI", "PR"])].to_crs(EQUAL_AREA)
+    out = pd.DataFrame({"fips": counties["fips"], "state": counties["state"], "county": counties["county"],
+                        "land_km2": counties["ALAND"] / 1e6})
+    out["census_division"] = out["fips"].str[:2].map(CENSUS_DIVISION)
+
+    out = out.merge(_load_rucc(refresh), on="fips", how="left")
+    out["pop_density_km2"] = out["pop_2020"] / out["land_km2"]
+    out = out.merge(_county_ecoregions(counties, refresh), on="fips", how="left")
+    out = out.merge(_county_line_km(counties, ROADS_URL, "tl_2023_us_primaryroads.zip",
+                                    lambda g: g["RTTYP"] == "I", "interstate_km", refresh), on="fips", how="left")
+    out = out.merge(_county_line_km(counties, RAILS_URL, "tl_2023_us_rails.zip",
+                                    lambda g: g["MTFCC"] == "R1011", "rail_km", refresh), on="fips", how="left")
+    for col in ["interstate_km", "rail_km"]:
+        out[col] = out[col].fillna(0.0)
+        out[col.replace("_km", "_km_per_km2")] = out[col] / out["land_km2"]
+    out["has_interstate"] = out["interstate_km"] > 0
+    out["has_rail"] = out["rail_km"] > 0
+
+    PROCESSED.mkdir(parents=True, exist_ok=True)
+    out.to_parquet(path, index=False)
+    return out
+
+
+def _load_rucc(refresh=False):
+    """USDA ERS Rural-Urban Continuum Codes 2023 (1 = largest metro … 9 = most rural) and 2020 population."""
+    path = RAW / "rucc_2023.csv"
+    _download(RUCC_URL, path, refresh)
+    long = pd.read_csv(path, dtype={"FIPS": str}, encoding="latin-1")
+    wide = long.pivot_table(index="FIPS", columns="Attribute", values="Value", aggfunc="first").reset_index()
+    wide = wide.rename(columns={"FIPS": "fips", "RUCC_2023": "rucc_2023", "Population_2020": "pop_2020"})
+    wide["rucc_2023"] = pd.to_numeric(wide["rucc_2023"], errors="coerce").astype("Int64")
+    wide["pop_2020"] = pd.to_numeric(wide["pop_2020"], errors="coerce")
+
+    # The 2023 file uses Connecticut's new planning regions, not its old counties
+    # (which our 2020 boundaries use). Fill those 8 from the 2013 edition; its
+    # population is 2010, flagged in rucc_source.
+    wide["rucc_source"] = "2023"
+    path13 = RAW / "rucc_2013.xls"
+    _download(RUCC_2013_URL, path13, refresh)
+    old = pd.read_excel(path13, dtype={"FIPS": str}, engine="xlrd")
+    ct = old[old["FIPS"].str.startswith("09")].rename(columns={"FIPS": "fips", "RUCC_2013": "rucc_2023",
+                                                                  "Population_2010": "pop_2020"})
+    ct = ct[~ct["fips"].isin(wide["fips"])].assign(rucc_source="2013 (CT; population 2010)")
+    ct["rucc_2023"] = ct["rucc_2023"].astype("Int64")
+    wide = pd.concat([wide, ct[["fips", "rucc_2023", "pop_2020", "rucc_source"]]], ignore_index=True)
+    wide["metro"] = pd.cut(wide["rucc_2023"].astype(float), [0, 3, 9], labels=["Metro", "Nonmetro"]).astype(str)
+    wide.loc[wide["rucc_2023"].isna(), "metro"] = None
+    return wide[["fips", "rucc_2023", "metro", "pop_2020", "rucc_source"]]
+
+
+def _county_ecoregions(counties, refresh=False):
+    """EPA Level III (and Level I) ecoregion covering the largest share of each county."""
+    path = RAW / "us_eco_l3.zip"
+    _download(ECO_L3_URL, path, refresh)
+    eco = gpd.read_file(path)[["US_L3NAME", "NA_L1NAME", "geometry"]].to_crs(EQUAL_AREA)
+    eco["geometry"] = eco.geometry.simplify(500)   # 500 m tolerance: plenty for a county majority
+    pieces = gpd.overlay(counties[["fips", "geometry"]], eco, how="intersection", keep_geom_type=True)
+    pieces["area"] = pieces.geometry.area
+    by = pieces.groupby(["fips", "US_L3NAME", "NA_L1NAME"])["area"].sum().reset_index()
+    top = by.sort_values("area", ascending=False).drop_duplicates("fips")
+    return top.rename(columns={"US_L3NAME": "ecoregion_l3", "NA_L1NAME": "ecoregion_l1"})[
+        ["fips", "ecoregion_l3", "ecoregion_l1"]]
+
+
+def _county_line_km(counties, url, name, keep, col, refresh=False):
+    """Kilometres of the selected TIGER line features inside each county."""
+    path = RAW / name
+    _download(url, path, refresh)
+    lines = gpd.read_file(path)
+    lines = lines[keep(lines)].to_crs(EQUAL_AREA)[["geometry"]]
+    pieces = gpd.overlay(lines, counties[["fips", "geometry"]], how="intersection", keep_geom_type=True)
+    pieces[col] = pieces.geometry.length / 1000
+    return pieces.groupby("fips")[col].sum().reset_index()
