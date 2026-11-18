@@ -13,6 +13,7 @@ Written explanations/interpretations/reflections are done by hand.
 | 2026-11-03 | Claude Code (Claude Opus 5.5) | lydemapr survey loader; iNaturalist vs. field-survey comparison (EDA 02b) | `src/data_sources.py` (lydemapr section), `notebooks/02b_inat_vs_lydemapr.ipynb`, `requirements.txt` (added scipy, statsmodels) | See below |
 | 2026-11-03 | Claude Code (Claude Opus 5.5) | FIA host-tree and GBIF Tree of Heaven loaders; host-plant EDA (02c) | `src/data_sources.py` (host plants section), `notebooks/02c_host_plants.ipynb` | See below |
 | 2026-11-17 | Claude Code (Claude Opus 5.5) | County categorical features: rural-urban codes, EPA ecoregions, interstates, rail, Census division (EDA 02d) | `src/data_sources.py` (county features section), `notebooks/02d_county_features.ipynb`, `requirements.txt` (added xlrd) | See below |
+| 2026-11-17 | Claude Code (Claude Opus 5.5) | Shared modeling table, experiment log, negative binomial model (notebook 04) | `src/modeling.py`, `notebooks/04_negative_binomial.ipynb`, `experiments/experiment_log.csv` | See below |
 
 ## Verification: 2026-10-27 data loading
 - **iNaturalist:** 98,859 rows vs. 98,856 from the API's `total_results` at the start (3 new sightings during the download); 0 duplicate IDs. The first attempt died silently at 23,800 rows, so the download was made resumable with retries.
@@ -63,6 +64,15 @@ Written explanations/interpretations/reflections are done by hand.
 - **Finding flagged in the notebook:** Level I ecoregion has only 2 testable groups in the invasion region, so Level III is the usable version.
 - **Run:** executed end to end in the project `.venv` with no errors. Interpretation cells left for the team.
 
+## Verification: 2026-11-17 modeling table and negative binomial (04)
+- **Shared table reproduces notebook 03 exactly:** same filter steps and row counts (35,827 → 8,790; train 5,309, test 3,481), persistence baseline RMSE 0.556 / MAE 0.214, and Elastic Net (B) re-fitted with notebook 03's settings scores RMSE 0.525 / MAE 0.251, matching the reported values.
+- **Leakage:** the Tree of Heaven sighting rate added in feature set C uses training years (≤2022) only; scalers are fitted on training years only.
+- **Fitting problems found and fixed:** the first optimizer (BFGS from default start) failed to converge for feature set B and produced infinite α. The model is now started from the Poisson solution with Newton's method, falling back to BFGS; all three feature sets converge (reported in the notebook).
+- **Scoring choice checked:** log1p of the NB predicted mean made the model look much worse than its training fit implied, because high α drags the mean up. The notebook scores the simulated expected log1p(count) instead (4,000 draws, fixed seed), which is the fair counterpart to models fitted on log1p(count). Both are explained in the notebook.
+- **Claims checked against data:** largest test-year count (1,723) verified before being quoted; zero shares and per-year errors computed directly.
+- **Result reported as is:** NB trails Elastic Net and persistence on every test year; the notebook diagnoses why (distribution shift, explosive extrapolation, collinear climate coefficients) rather than tuning until it looks better.
+- **Run:** executed end to end in the project `.venv` with no errors. Interpretation cells left for the team.
+
 ## Prompts
 Prompts were given conversationally in Claude Code. Key requests:
 1. "Given that description, what other questions need to be answered to define the project scope and objectives?"
@@ -74,3 +84,4 @@ Prompts were given conversationally in Claude Code. Key requests:
 7. "Compare inaturalist data with lydemapr for now."
 8. "Can we get host plant data as well?"
 9. "Let's get a few more categorical features in the set."
+10. "Before we build spread features, does it make sense to add another model?" then "Set up both [modeling table and experiment log] and start the negative binomial."
