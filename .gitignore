@@ -220,3 +220,6 @@ __marimo__/
 # Project data: raw downloads are large and re-creatable with src/data_sources.py
 data/raw/*
 !data/raw/.gitkeep
+
+# Local Claude Code preview config
+.claude/

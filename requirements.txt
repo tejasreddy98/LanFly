@@ -10,3 +10,5 @@ ipykernel
 scipy
 statsmodels
 xlrd
+streamlit
+plotly

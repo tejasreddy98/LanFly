@@ -14,6 +14,7 @@ Written explanations/interpretations/reflections are done by hand.
 | 2026-11-03 | Claude Code (Claude Opus 5.5) | FIA host-tree and GBIF Tree of Heaven loaders; host-plant EDA (02c) | `src/data_sources.py` (host plants section), `notebooks/02c_host_plants.ipynb` | See below |
 | 2026-11-17 | Claude Code (Claude Opus 5.5) | County categorical features: rural-urban codes, EPA ecoregions, interstates, rail, Census division (EDA 02d) | `src/data_sources.py` (county features section), `notebooks/02d_county_features.ipynb`, `requirements.txt` (added xlrd) | See below |
 | 2026-11-17 | Claude Code (Claude Opus 5.5) | Shared modeling table, experiment log, negative binomial model (notebook 04) | `src/modeling.py`, `notebooks/04_negative_binomial.ipynb`, `experiments/experiment_log.csv` | See below |
+| 2026-11-20 | Claude Code (Claude Opus 5.5) | Streamlit app skeleton (map explorer, county predictions, model comparison) and its data prep | `app/streamlit_app.py`, `app/prepare_data.py`, `app/data/`, `app/requirements.txt`, `requirements.txt` (added streamlit, plotly) | See below |
 
 ## Verification: 2026-10-27 data loading
 - **iNaturalist:** 98,859 rows vs. 98,856 from the API's `total_results` at the start (3 new sightings during the download); 0 duplicate IDs. The first attempt died silently at 23,800 rows, so the download was made resumable with retries.
@@ -73,6 +74,13 @@ Written explanations/interpretations/reflections are done by hand.
 - **Result reported as is:** NB trails Elastic Net and persistence on every test year; the notebook diagnoses why (distribution shift, explosive extrapolation, collinear climate coefficients) rather than tuning until it looks better.
 - **Run:** executed end to end in the project `.venv` with no errors. Interpretation cells left for the team.
 
+## Verification: 2026-11-20 Streamlit app (app/)
+- **Model reproduced:** `app/prepare_data.py` refits Elastic Net (B) with notebook 03's alphas, l1 ratios and expanding-window CV on the shared table; test scores (RMSE 0.5248, MAE 0.2513, R² 0.8345) match the experiment log exactly.
+- **Bug found and fixed:** the first export merged county names twice (duplicate `state_x`/`state_y` columns), which crashed the app on load; fixed by using the names already in the county-year table.
+- **Pages tested:** Streamlit's headless `AppTest` loaded all four pages and every map option with no exceptions; the map was also checked visually in a browser.
+- **Self-contained deploy:** the app reads only `app/data/` (~1 MB, committed) and `experiments/experiment_log.csv`, never `data/raw` or the network.
+- **Written text is a placeholder:** the About page and chart captions were drafted by AI and must be rewritten by the team (course rule on written explanations).
+
 ## Prompts
 Prompts were given conversationally in Claude Code. Key requests:
 1. "Given that description, what other questions need to be answered to define the project scope and objectives?"
@@ -85,3 +93,4 @@ Prompts were given conversationally in Claude Code. Key requests:
 8. "Can we get host plant data as well?"
 9. "Let's get a few more categorical features in the set."
 10. "Before we build spread features, does it make sense to add another model?" then "Set up both [modeling table and experiment log] and start the negative binomial."
+11. "Let's work on the dashboard/application portion of the project" (framework chosen by the team: Streamlit, approved by the professor).
