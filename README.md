@@ -101,6 +101,13 @@ python3 -m venv .venv
 ```
 Run the notebooks in order: `01_data_loading` (data), `02_eda` (EDA), then `03_regularized_regression` (first model). The first run downloads the data into `data/raw/` (about 10 minutes, mostly the iNaturalist API). Later runs use the cached files. AI usage is logged in [`docs/ai_usage.md`](docs/ai_usage.md).
 
+## Modeling Table
+All models use one shared county-year table: 8,790 rows (train 2015–2022: 5,309; test 2023–2025: 3,481), 36 columns.
+- **Saved copy:** [`data/processed/model_table.csv`](data/processed/model_table.csv) (also `.parquet`), with the row count after each filter in `model_table_filter_steps.csv`.
+- **Source of truth:** `build_model_table()` in [`src/modeling.py`](src/modeling.py), which shows every merge, filter and feature definition. Feature sets A, B and C are listed in `FEATURE_SETS`.
+- **Use in a notebook:** `df = m.load_model_table()`, then `train, test = m.split(df)`. Log results with `m.log_experiment(...)`.
+- **Rebuild after changing the code or the processed data:** `cd src && python modeling.py`
+
 ## Streamlit App
 The dashboard in [`app/`](app/) has four pages: a county map explorer (sightings, effort, predictions and climate by year), actual vs. predicted sightings for any county, a model comparison built from [`experiments/experiment_log.csv`](experiments/experiment_log.csv), and an About page.
 

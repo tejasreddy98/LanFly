@@ -1,0 +1,6 @@
+step,rows
+all county-years 2014-2025,35827
+in invasion region box,16811
+with >= 200 observations,8956
+with complete climate,8941
+in train + test years (2015-2025),8790

@@ -97,6 +97,28 @@ def build_model_table(verbose=True):
     return df, steps
 
 
+TABLE_PATH = ds.PROCESSED / "model_table.parquet"
+
+
+def save_model_table():
+    """Build the modeling table and save it to data/processed/ (parquet + CSV copy for browsing).
+
+    build_model_table() stays the source of truth: re-run this after any change to it or to the
+    processed inputs, so the saved file never drifts from the code.
+    """
+    df, steps = build_model_table(verbose=True)
+    df.to_parquet(TABLE_PATH, index=False)
+    df.to_csv(TABLE_PATH.with_suffix(".csv"), index=False)
+    steps.to_csv(TABLE_PATH.with_name("model_table_filter_steps.csv"), index=False)
+    print(f"saved {len(df):,} rows x {df.shape[1]} columns -> {TABLE_PATH.name} (+ .csv)")
+    return df
+
+
+def load_model_table():
+    """Read the saved modeling table (fast; no rebuild). Call save_model_table() first if missing."""
+    return pd.read_parquet(TABLE_PATH) if TABLE_PATH.exists() else save_model_table()
+
+
 def _county_columns():
     """Static per-county predictors: host plants and county features."""
     feat = ds.load_county_features()[["fips", "metro", "census_division", "has_interstate",
@@ -164,3 +186,7 @@ def log_experiment(notebook, model, feature_set, metrics, n_train, n_test, notes
 
 def read_log():
     return pd.read_csv(LOG_PATH) if LOG_PATH.exists() else pd.DataFrame()
+
+
+if __name__ == "__main__":
+    save_model_table()
