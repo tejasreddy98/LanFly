@@ -46,7 +46,7 @@ Some of the available datasets found so far are from sources such as
 - Slides (8–10, PDF/HTML) with a live app demo; 12 min including Q&A
 - Raw **and** cleaned data, plus the code that turns one into the other
 - Reproducible, commented GitHub repo with run instructions
-- Publicly deployed app (Dash, Flask, or FastAPI)
+- Publicly deployed app (Streamlit, approved by the professor)
 - AI-usage document: AI-generated code flagged and how it was verified; any CLAUDE.md/prompts included. **No AI for written explanations or reflections.**
 
 ### Open Decisions (resolve before modeling)
@@ -81,14 +81,16 @@ Some of the available datasets found so far are from sources such as
 ### Roles
 _To be assigned:_ data pipeline · EDA/visualization · modeling · unsupervised learning · app · presentation/AI documentation.
 
-### Repository Structure (planned)
+### Repository Structure
 ```
-data/raw/        original downloads (or links if too large)
+data/raw/        original downloads (not committed; re-created by src/data_sources.py)
 data/processed/  cleaned, model-ready data
 notebooks/       EDA and modeling notebooks
 src/             reusable data and modeling code
-app/             deployed dashboard
-docs/            AI-usage log, experiment log, notes
+experiments/     experiment log (every model run, same train/test rows)
+app/             Streamlit dashboard and its small data files
+presentations/   project walkthrough slides (open the .html in a browser)
+docs/            AI-usage log, to-do list, notes
 ```
 
 ## Getting Started
@@ -98,3 +100,18 @@ python3 -m venv .venv
 .venv/bin/jupyter lab notebooks/01_data_loading.ipynb
 ```
 Run the notebooks in order: `01_data_loading` (data), `02_eda` (EDA), then `03_regularized_regression` (first model). The first run downloads the data into `data/raw/` (about 10 minutes, mostly the iNaturalist API). Later runs use the cached files. AI usage is logged in [`docs/ai_usage.md`](docs/ai_usage.md).
+
+## Streamlit App
+The dashboard in [`app/`](app/) has four pages: a county map explorer (sightings, effort, predictions and climate by year), actual vs. predicted sightings for any county, a model comparison built from [`experiments/experiment_log.csv`](experiments/experiment_log.csv), and an About page.
+
+Run it locally from the repo root:
+```bash
+.venv/bin/streamlit run app/streamlit_app.py
+```
+
+The app reads only the small files in `app/data/` (committed, about 1 MB) plus the experiment log, so it needs no raw data or internet. After the modeling table or the chosen model changes, rebuild those files and commit them:
+```bash
+.venv/bin/python app/prepare_data.py
+```
+
+**Deploying (Streamlit Community Cloud, free):** sign in at [share.streamlit.io](https://share.streamlit.io) with GitHub, create an app from this repo, branch `main`, main file `app/streamlit_app.py`. It installs from [`app/requirements.txt`](app/requirements.txt) and redeploys on every push to `main`.
