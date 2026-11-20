@@ -41,6 +41,57 @@ print("Elastic Net B test scores:", {k: round(v, 4) for k, v in check.items()})
 coef = pd.DataFrame({"feature": feats, "coef_std": model[-1].coef_})
 coef.to_csv(OUT / "elasticnet_b_coefficients.csv", index=False)
 
+# 1b. Predictions from several models for the county page, all on the log1p scale.
+#     Settings mirror notebooks 03 (Ridge/Lasso/Elastic Net) and 04 (negative binomial).
+import statsmodels.api as sm  # noqa: E402
+from sklearn.linear_model import LassoCV, RidgeCV  # noqa: E402
+
+ALPHAS = np.logspace(-6, 3, 80)
+sk_models = {
+    "Elastic Net (B)": (model, "B"),
+    "Elastic Net (A)": (make_pipeline(StandardScaler(), ElasticNetCV(alphas=ALPHAS, l1_ratio=[.1, .5, .9],
+                                                                     cv=cv, max_iter=50_000)), "A"),
+    "Ridge (B)": (make_pipeline(StandardScaler(), RidgeCV(alphas=ALPHAS, cv=cv)), "B"),
+    "Lasso (B)": (make_pipeline(StandardScaler(), LassoCV(alphas=ALPHAS, cv=cv, max_iter=50_000)), "B"),
+}
+preds = {"Persistence baseline": df["lag_log_count"].to_numpy()}
+for name, (mdl, fs) in sk_models.items():
+    f = m.FEATURE_SETS[fs]
+    if mdl is not model:
+        mdl.fit(train[f], train["y"])
+    preds[name] = mdl.predict(df[f])
+
+
+def nb_elog1p(fs, draws=4000, seed=6021):
+    """NB2 fitted as in notebook 04; returns simulated E[log1p(Y)] for every row of df."""
+    f = m.FEATURE_SETS[fs]
+    sc = StandardScaler().fit(train[f])
+    Xtr, Xall = sm.add_constant(sc.transform(train[f])), sm.add_constant(sc.transform(df[f]))
+    ytr = train["slf_obs"].to_numpy()
+    pois = sm.GLM(ytr, Xtr, family=sm.families.Poisson()).fit()
+    nbm = sm.NegativeBinomial(ytr, Xtr, loglike_method="nb2")
+    res = nbm.fit(start_params=np.append(np.asarray(pois.params), 1.0), method="newton", maxiter=200, disp=0)
+    if not res.mle_retvals["converged"]:
+        res = nbm.fit(start_params=np.asarray(res.params), method="bfgs", maxiter=5000, disp=0)
+    p = np.asarray(res.params)
+    mu, size = np.exp(Xall @ p[:-1]), 1 / p[-1]
+    rng = np.random.default_rng(seed)
+    sims = rng.negative_binomial(size, (size / (size + mu))[:, None], size=(len(mu), draws))
+    return np.log1p(sims).mean(axis=1)
+
+
+for fs in ["B", "C"]:
+    preds[f"Negative binomial ({fs})"] = nb_elog1p(fs)
+
+long = []
+is_test = (df["split"] == "test").to_numpy()
+for name, p in preds.items():
+    rmse = float(np.sqrt(((p[is_test] - df.loc[is_test, "y"]) ** 2).mean()))
+    print(f"  {name:<24} test RMSE {rmse:.4f}")
+    long.append(pd.DataFrame({"fips": df["fips"], "year": df["year"], "model": name, "pred_log": p,
+                              "pred_count": np.expm1(p).clip(min=0), "test_rmse": rmse}))
+pd.concat(long).to_parquet(OUT / "model_predictions.parquet", index=False)
+
 # 2. County-year table for the maps: every county-year in the region box (not just modeled rows).
 cy = pd.read_parquet(ds.PROCESSED / "county_year_effort.parquet")
 cy = cy[cy["year"].isin(m.YEARS)]

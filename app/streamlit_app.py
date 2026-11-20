@@ -32,10 +32,11 @@ def load():
     log = pd.read_csv(LOG)
     coef = pd.read_csv(DATA / "elasticnet_b_coefficients.csv")
     hosts = pd.read_parquet(DATA / "county_hosts.parquet")
-    return cy, geo, log, coef, hosts
+    preds = pd.read_parquet(DATA / "model_predictions.parquet")
+    return cy, geo, log, coef, hosts, preds
 
 
-cy, geo, log, coef, hosts = load()
+cy, geo, log, coef, hosts, preds = load()
 
 MAP_METRICS = {
     "Reported sightings (count)": ("slf_obs", "log"),
@@ -179,28 +180,46 @@ elif page == "County-Level Predictions":
     modeled = cy.dropna(subset=["pred_log"])
     totals = modeled.groupby("label")["slf_obs"].sum()
     options = sorted(totals.index)
-    county = st.selectbox("County", options, index=options.index(totals.idxmax()))
+    c1, _ = st.columns([1, 2])
+    county = c1.selectbox("County", options, index=options.index(totals.idxmax()))
+    model_rmse = preds.groupby("model")["test_rmse"].first().sort_values()
+    chosen = st.multiselect(
+        "Models (ordered by test RMSE)", list(model_rmse.index),
+        default=["Elastic Net (B)", "Persistence baseline", "Negative binomial (B)"],
+        format_func=lambda n: f"{n}  ·  RMSE {model_rmse[n]:.3f}")
     d = cy[cy["label"] == county].sort_values("year")
+    fips = d["fips"].iloc[0]
+    p = preds[(preds["fips"] == fips) & preds["model"].isin(chosen)]
 
     fig = go.Figure()
     fig.add_vrect(x0=2022.5, x1=2025.5, fillcolor="#B23A24", opacity=.08, line_width=0,
                   annotation_text="Test period (2023–2025)", annotation_position="top left")
     fig.add_trace(go.Scatter(x=d["year"], y=d["slf_obs"], mode="lines+markers", name="Observed",
-                             line=dict(color="#1F2A30")))
-    fig.add_trace(go.Scatter(x=d["year"], y=d["pred_count"], mode="lines+markers", name="Predicted (Elastic Net, feature set B)",
-                             line=dict(color="#2D6A6E", dash="dash")))
-    fig.update_layout(height=450, yaxis_title="Reported sightings", xaxis_title="Year", xaxis=dict(dtick=1),
-                      legend=dict(orientation="h", y=1.1), margin=dict(t=40))
+                             line=dict(color="#1F2A30", width=3)))
+    palette = px.colors.qualitative.Safe
+    for i, name in enumerate(chosen):
+        pm = p[p["model"] == name].sort_values("year")
+        fig.add_trace(go.Scatter(x=pm["year"], y=pm["pred_count"], mode="lines+markers", name=name,
+                                 line=dict(color=palette[i % len(palette)], dash="dash")))
+    log_y = st.toggle("Logarithmic y-axis", value=False)
+    fig.update_layout(height=470, yaxis_title="Reported sightings", xaxis_title="Year", xaxis=dict(dtick=1),
+                      legend=dict(orientation="h", y=1.12), margin=dict(t=50))
+    if log_y:
+        fig.update_yaxes(type="log")
     st.plotly_chart(fig, width="stretch")
 
-    t = d[["year", "split", "slf_obs", "pred_count", "all_obs", "tavg_annual", "tmin_winter", "precip_annual"]]
-    t = t.rename(columns={"year": "Year", "split": "Sample", "slf_obs": "Observed", "pred_count": "Predicted",
+    wide = p.pivot_table(index="year", columns="model", values="pred_count").reindex(columns=chosen)
+    t = (d.set_index("year")[["split", "slf_obs", "all_obs", "tavg_annual", "tmin_winter", "precip_annual"]]
+           .join(wide).reset_index())
+    t = t.rename(columns={"year": "Year", "split": "Sample", "slf_obs": "Observed",
                           "all_obs": "Observer effort", "tavg_annual": "Mean temp. (°F)",
                           "tmin_winter": "Min. winter temp. (°F)", "precip_annual": "Precip. (in)"})
     st.dataframe(t.round(1), hide_index=True, width="stretch")
-    st.caption("The model was fitted on 2015–2022; predictions for 2023–2025 are out-of-sample. "
-               "Years without a prediction fall outside the modeling sample (insufficient observer effort "
-               "or incomplete climate records).")
+    st.caption("All models were fitted on 2015–2022; predictions for 2023–2025 are out-of-sample. Predictions "
+               "are back-transformed from the log(1 + count) scale on which the models are scored; for the "
+               "negative binomial this is the simulated expected log(1 + count), not the predicted mean. The "
+               "persistence baseline predicts the previous year's count. Years without a prediction fall "
+               "outside the modeling sample (insufficient observer effort or incomplete climate records).")
 
 # ------------------------------------------------------------ Model comparison
 elif page == "Model Evaluation":
