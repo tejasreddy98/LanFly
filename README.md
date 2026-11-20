@@ -1,5 +1,9 @@
 # Lantern-Fly-Predictor
 
+[![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://lanfly.streamlit.app)
+
+**Live dashboard:** https://lanfly.streamlit.app
+
 Group Members:
 
 Tejas Reddy - zkw2ag
@@ -109,6 +113,8 @@ All models use one shared county-year table: 8,790 rows (train 2015–2022: 5,30
 - **Rebuild after changing the code or the processed data:** `cd src && python modeling.py`
 
 ## Streamlit App
+**Live app:** [lanfly.streamlit.app](https://lanfly.streamlit.app) (redeploys automatically on every push to `main`).
+
 The dashboard in [`app/`](app/) has four pages: a county map explorer (sightings, effort, predictions and climate by year), actual vs. predicted sightings for any county, a model comparison built from [`experiments/experiment_log.csv`](experiments/experiment_log.csv), and an About page.
 
 Run it locally from the repo root:
