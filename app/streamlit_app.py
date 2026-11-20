@@ -18,7 +18,7 @@ APP = Path(__file__).resolve().parent
 DATA = APP / "data"
 LOG = APP.parent / "experiments" / "experiment_log.csv"
 
-st.set_page_config(page_title="LanFly", page_icon="🦗", layout="wide")
+st.set_page_config(page_title="Spotted Lanternfly Population Model", layout="wide")
 
 
 @st.cache_data
@@ -31,136 +31,225 @@ def load():
     cy = cy[cy["fips"].isin(in_box)]
     log = pd.read_csv(LOG)
     coef = pd.read_csv(DATA / "elasticnet_b_coefficients.csv")
-    return cy, geo, log, coef
+    hosts = pd.read_parquet(DATA / "county_hosts.parquet")
+    return cy, geo, log, coef, hosts
 
 
-cy, geo, log, coef = load()
+cy, geo, log, coef, hosts = load()
 
 MAP_METRICS = {
-    "Lanternfly sightings": ("slf_obs", "log"),
-    "Sightings per 10k observations (effort-adjusted)": ("slf_per_10k", "log"),
-    "Predicted sightings (Elastic Net B)": ("pred_count", "log"),
-    "Prediction error (log scale, predicted − actual)": ("resid", "diverging"),
-    "Observer effort (all iNaturalist observations)": ("all_obs", "log"),
-    "Average annual temperature (°F)": ("tavg_annual", "linear"),
-    "Coldest winter month low (°F)": ("tmin_winter", "linear"),
+    "Reported sightings (count)": ("slf_obs", "log"),
+    "Sightings per 10,000 observations (effort-adjusted rate)": ("slf_per_10k", "log"),
+    "Predicted sightings (Elastic Net, feature set B)": ("pred_count", "log"),
+    "Prediction residual, log(1 + count) scale (predicted − observed)": ("resid", "diverging"),
+    "Observer effort (total iNaturalist observations)": ("all_obs", "log"),
+    "Mean annual temperature (°F)": ("tavg_annual", "linear"),
+    "Minimum winter temperature (°F)": ("tmin_winter", "linear"),
     "Annual precipitation (in)": ("precip_annual", "linear"),
 }
 cy["resid"] = cy["pred_log"] - cy["y"]
 
-st.sidebar.title("🦗 LanFly")
-page = st.sidebar.radio("Page", ["Map explorer", "County predictions", "Model comparison", "About"])
-st.sidebar.caption("DS 6021 final project · Reddy, Vrouwenvelder, Safdari, Wagner, Witzel")
+st.sidebar.title("Spotted Lanternfly Population Model")
+page = st.sidebar.radio("Section", ["Spatial Distribution", "County-Level Predictions", "Model Evaluation", "Project Overview"])
+st.sidebar.caption("DS 6021 Final Project, University of Virginia\n\nT. Reddy, L. Vrouwenvelder, N. Safdari, M. Wagner, A. Witzel")
 
-# ---------------------------------------------------------------- Map explorer
-if page == "Map explorer":
-    st.title("Where are spotted lanternflies being reported?")
-    c1, c2 = st.columns([2, 3])
-    year = c1.slider("Year", int(cy["year"].min()), int(cy["year"].max()), 2025)
-    metric = c2.selectbox("Show", list(MAP_METRICS))
-    col, scale = MAP_METRICS[metric]
+# ---------------------------------------------------------------- Map helpers
+TICK_COUNTS = [0, 1, 10, 100, 1000, 10000]
+LOG_TICKS = [float(np.log10(v + 1)) for v in TICK_COUNTS]
+TICK_TEXT = [f"{v:,}" for v in TICK_COUNTS]
 
-    d = cy[cy["year"] == year].copy()
-    if col in ("pred_count", "resid") and d[col].isna().all():
-        st.info("Predictions exist only for modeled county-years (2015–2025, enough observer effort).")
-    shown = d[col]
-    color_args = {}
+
+def county_map(d, value, scale, hover, height=560, vmax=None, title=None):
+    """Choropleth of one column. scale: 'log' (log10(1+x) colors, count tick labels), 'diverging', 'linear'."""
+    d = d.copy()
     if scale == "log":
-        d["value"] = np.log10(shown + 1)
-        ticks = [0, 1, 2, 3, 4, 5]
-        color_args = dict(color_continuous_scale="YlOrRd", range_color=(0, max(1, d["value"].quantile(.995))))
-        cbar = dict(tickvals=ticks, ticktext=[f"{10**t - 1:,.0f}" for t in ticks], title="")
+        d["_v"] = np.log10(d[value] + 1)
+        hi = vmax if vmax is not None else max(1, d["_v"].quantile(.995))
+        args = dict(color_continuous_scale="YlOrRd", range_color=(0, hi))
+        cbar = dict(tickvals=LOG_TICKS, ticktext=TICK_TEXT, title="")
     elif scale == "diverging":
-        d["value"] = shown
-        color_args = dict(color_continuous_scale="RdBu_r", range_color=(-2, 2))
+        d["_v"] = d[value]
+        args = dict(color_continuous_scale="RdBu_r", range_color=(-2, 2))
         cbar = dict(title="")
     else:
-        d["value"] = shown
-        color_args = dict(color_continuous_scale="Viridis")
+        d["_v"] = d[value]
+        # Percentile limits keep one extreme county from washing out the rest of the map.
+        args = dict(color_continuous_scale="Viridis",
+                    range_color=(d["_v"].quantile(.01), d["_v"].quantile(.99)))
         cbar = dict(title="")
-
-    fig = px.choropleth(d, geojson=geo, locations="fips", featureidkey="properties.fips", color="value",
-                        hover_name="label",
-                        hover_data={"fips": False, "value": False, "slf_obs": ":,", "all_obs": ":,",
-                                    "pred_count": ":,.0f"},
-                        labels={"slf_obs": "Sightings", "all_obs": "All observations",
-                                "pred_count": "Predicted"},
-                        **color_args)
+    fig = px.choropleth(d, geojson=geo, locations="fips", featureidkey="properties.fips", color="_v",
+                        hover_name="label", hover_data={"fips": False, "_v": False, **hover},
+                        labels={**HOVER_LABELS, "toh_obs": "Tree of Heaven sightings"}, **args)
     fig.update_geos(fitbounds="locations", visible=False)
-    fig.update_layout(height=620, margin=dict(l=0, r=0, t=0, b=0), coloraxis_colorbar=cbar)
-    st.plotly_chart(fig, width="stretch")
+    fig.update_layout(height=height, margin=dict(l=0, r=0, t=30 if title else 0, b=0),
+                      coloraxis_colorbar=cbar, title=title)
+    return fig
 
-    a, b, c = st.columns(3)
-    a.metric("Counties with sightings", f"{(d['slf_obs'] > 0).sum():,}")
-    b.metric("Total sightings", f"{int(d['slf_obs'].sum()):,}")
-    c.metric("Observer effort (all obs.)", f"{int(d['all_obs'].sum()):,}")
-    st.caption("Sightings are iNaturalist research-grade observations, a proxy for population that also "
-               "depends on how many people are looking. Grey counties have no data for that year.")
+
+HOVER = {"slf_obs": ":,", "all_obs": ":,", "pred_count": ":,.0f"}
+HOVER_LABELS = {"slf_obs": "Observed", "all_obs": "Observer effort", "pred_count": "Predicted"}
+
+# ---------------------------------------------------------------- Spatial distribution
+if page == "Spatial Distribution":
+    st.title("Spatial Distribution of Reported Sightings")
+    tab1, tab2, tab3 = st.tabs(["Single variable", "Observed vs. predicted", "Host plants"])
+
+    with tab1:
+        c1, c2 = st.columns([2, 3])
+        year = c1.slider("Year", int(cy["year"].min()), int(cy["year"].max()), 2025, key="y1")
+        metric = c2.selectbox("Variable", list(MAP_METRICS))
+        col, scale = MAP_METRICS[metric]
+        d = cy[cy["year"] == year]
+        if col in ("pred_count", "resid") and d[col].isna().all():
+            st.info("Predictions are available only for county-years included in the modeling sample "
+                    "(2015–2025, with sufficient observer effort and complete climate records).")
+        fig = county_map(d, col, scale, HOVER, height=620)
+        st.plotly_chart(fig, width="stretch")
+        a, b, c = st.columns(3)
+        a.metric("Counties with ≥1 sighting", f"{(d['slf_obs'] > 0).sum():,}")
+        b.metric("Total reported sightings", f"{int(d['slf_obs'].sum()):,}")
+        c.metric("Total observer effort", f"{int(d['all_obs'].sum()):,}")
+        st.caption("Sightings are research-grade iNaturalist observations, used here as a proxy for population "
+                   "abundance; reported counts also depend on observer effort. Counties without data for the "
+                   "selected year are not shaded.")
+
+    with tab2:
+        modeled_years = sorted(cy.dropna(subset=["pred_log"])["year"].unique())
+        year2 = st.select_slider("Year", options=modeled_years, value=modeled_years[-1], key="y2")
+        d = cy[(cy["year"] == year2)].dropna(subset=["pred_count"])
+        vmax = max(1, np.log10(d[["slf_obs", "pred_count"]].to_numpy().max() + 1))
+        m1, m2 = st.columns(2)
+        m1.plotly_chart(county_map(d, "slf_obs", "log", HOVER, height=430, vmax=vmax, title="Observed"),
+                        width="stretch")
+        m2.plotly_chart(county_map(d, "pred_count", "log", HOVER, height=430, vmax=vmax,
+                                   title="Predicted (Elastic Net, feature set B)"), width="stretch")
+
+        s1, s2 = st.columns([3, 2])
+        lim = np.log10(max(d["slf_obs"].max(), d["pred_count"].max()) + 1) + .1
+        sc = px.scatter(d.assign(obs=np.log10(d["slf_obs"] + 1), pred=np.log10(d["pred_count"] + 1)),
+                        x="obs", y="pred", hover_name="label", opacity=.6,
+                        hover_data={"obs": False, "pred": False, "slf_obs": ":,", "pred_count": ":,.0f"},
+                        labels={"obs": "Observed sightings", "pred": "Predicted sightings", **HOVER_LABELS})
+        sc.add_shape(type="line", x0=0, y0=0, x1=lim, y1=lim, line=dict(dash="dash", color="grey"))
+        ticks = dict(tickvals=LOG_TICKS, ticktext=TICK_TEXT, range=[-.05, lim])
+        sc.update_layout(height=380, xaxis=ticks, yaxis=ticks, margin=dict(t=30), title="County-level agreement")
+        s1.plotly_chart(sc, width="stretch")
+        err = d["pred_log"] - d["y"]
+        s2.metric("Counties in modeling sample", f"{len(d):,}")
+        s2.metric("RMSE, log(1 + count)", f"{np.sqrt((err ** 2).mean()):.3f}")
+        s2.metric("Sample", "Test (out-of-sample)" if year2 >= 2023 else "Training (in-sample)")
+        st.caption("Both maps share one color scale. Points on the dashed line are predicted exactly; points "
+                   "below it are under-predicted. Only county-years in the modeling sample are shown.")
+
+    with tab3:
+        HOSTS = {
+            "Tree of Heaven, share of forest trees (FIA)": ("tree_of_heaven_share", "pct"),
+            "Tree of Heaven, iNaturalist sightings per 10,000 observations": ("toh_per_10k", "log"),
+            "Black walnut, share of forest trees (FIA)": ("black_walnut_share", "pct"),
+            "Maples, share of forest trees (FIA)": ("maple_share", "pct"),
+            "Willows, share of forest trees (FIA)": ("willow_share", "pct"),
+        }
+        hsel = st.selectbox("Host variable", list(HOSTS))
+        hcol, hscale = HOSTS[hsel]
+        labels = cy[["fips", "label"]].drop_duplicates()
+        h = hosts.merge(labels, on="fips")
+        cum = cy.groupby("fips")[["slf_obs", "all_obs"]].sum()
+        h = h.merge((1e4 * cum["slf_obs"] / cum["all_obs"]).rename("slf_rate").reset_index(), on="fips", how="left")
+        if hscale == "pct":
+            h["_pct"] = 100 * h[hcol]
+            fig = county_map(h, "_pct", "linear", {"_pct": ":.2f"}, height=560)
+            fig.update_traces(hovertemplate="<b>%{hovertext}</b><br>%{z:.2f}%<extra></extra>")
+            fig.update_layout(coloraxis_colorbar=dict(title="%"))
+        else:
+            fig = county_map(h, hcol, "log", {"toh_obs": ":,"}, height=560)
+        st.plotly_chart(fig, width="stretch")
+
+        valid = h[[hcol, "slf_rate"]].dropna()
+        rho = valid[hcol].rank().corr(valid["slf_rate"].rank())
+        st.metric(f"Spearman correlation with lanternfly sightings per 10,000 observations (2014–2025), "
+                  f"n = {len(valid):,}", f"{rho:.2f}")
+        st.caption("Tree of Heaven (*Ailanthus altissima*) is the preferred host of the spotted lanternfly; "
+                   "black walnut, maples and willows are secondary hosts. FIA shares are estimated from "
+                   "forest-inventory plots and are missing for counties without sampled forest land. Host "
+                   "variables are static (one value per county).")
 
 # ---------------------------------------------------------- County predictions
-elif page == "County predictions":
-    st.title("Actual vs. predicted sightings by county")
+elif page == "County-Level Predictions":
+    st.title("Observed and Predicted Sightings by County")
     modeled = cy.dropna(subset=["pred_log"])
-    top = (modeled.groupby("label")["slf_obs"].sum().sort_values(ascending=False).index.tolist())
-    county = st.selectbox("County (sorted by total sightings)", top)
+    totals = modeled.groupby("label")["slf_obs"].sum()
+    options = sorted(totals.index)
+    county = st.selectbox("County", options, index=options.index(totals.idxmax()))
     d = cy[cy["label"] == county].sort_values("year")
 
     fig = go.Figure()
     fig.add_vrect(x0=2022.5, x1=2025.5, fillcolor="#B23A24", opacity=.08, line_width=0,
-                  annotation_text="test years", annotation_position="top left")
-    fig.add_trace(go.Scatter(x=d["year"], y=d["slf_obs"], mode="lines+markers", name="Actual",
+                  annotation_text="Test period (2023–2025)", annotation_position="top left")
+    fig.add_trace(go.Scatter(x=d["year"], y=d["slf_obs"], mode="lines+markers", name="Observed",
                              line=dict(color="#1F2A30")))
-    fig.add_trace(go.Scatter(x=d["year"], y=d["pred_count"], mode="lines+markers", name="Predicted (Elastic Net B)",
+    fig.add_trace(go.Scatter(x=d["year"], y=d["pred_count"], mode="lines+markers", name="Predicted (Elastic Net, feature set B)",
                              line=dict(color="#2D6A6E", dash="dash")))
-    fig.update_layout(height=450, yaxis_title="Lanternfly sightings", xaxis=dict(dtick=1),
+    fig.update_layout(height=450, yaxis_title="Reported sightings", xaxis_title="Year", xaxis=dict(dtick=1),
                       legend=dict(orientation="h", y=1.1), margin=dict(t=40))
     st.plotly_chart(fig, width="stretch")
 
     t = d[["year", "split", "slf_obs", "pred_count", "all_obs", "tavg_annual", "tmin_winter", "precip_annual"]]
-    t = t.rename(columns={"split": "set", "slf_obs": "actual", "pred_count": "predicted",
-                          "all_obs": "all observations", "tavg_annual": "avg temp °F",
-                          "tmin_winter": "winter low °F", "precip_annual": "precip in"})
+    t = t.rename(columns={"year": "Year", "split": "Sample", "slf_obs": "Observed", "pred_count": "Predicted",
+                          "all_obs": "Observer effort", "tavg_annual": "Mean temp. (°F)",
+                          "tmin_winter": "Min. winter temp. (°F)", "precip_annual": "Precip. (in)"})
     st.dataframe(t.round(1), hide_index=True, width="stretch")
-    st.caption("The model was trained on 2015–2022 only; 2023–2025 are out-of-sample predictions. "
-               "Years with no prediction were outside the modeling filters (too little observer effort "
-               "or incomplete climate data).")
+    st.caption("The model was fitted on 2015–2022; predictions for 2023–2025 are out-of-sample. "
+               "Years without a prediction fall outside the modeling sample (insufficient observer effort "
+               "or incomplete climate records).")
 
 # ------------------------------------------------------------ Model comparison
-elif page == "Model comparison":
-    st.title("How do the models compare?")
-    st.write("Every model is trained on 2015–2022 and tested on 2023–2025, on the same rows. "
-             "Lower RMSE and MAE are better; scores are on the log(1 + count) scale.")
+elif page == "Model Evaluation":
+    st.title("Model Evaluation")
+    st.write("All models are fitted on 2015–2022 and evaluated on a held-out test period (2023–2025) "
+             "using identical observations. Error metrics are computed on the log(1 + count) scale; "
+             "lower RMSE and MAE indicate better predictive accuracy.")
     log["run"] = log["model"] + log["feature_set"].map(lambda f: "" if f == "-" else f" ({f})")
     order = log.sort_values("test_RMSE")
     fig = px.bar(order, x="test_RMSE", y="run", orientation="h", color="notebook",
-                 labels={"test_RMSE": "Test RMSE (lower is better)", "run": ""}, text="test_RMSE")
+                 labels={"test_RMSE": "Test RMSE", "run": "", "notebook": "Notebook"}, text="test_RMSE")
     fig.update_traces(texttemplate="%{text:.3f}", textposition="outside")
     fig.update_layout(height=420, yaxis=dict(autorange="reversed"), margin=dict(t=10))
     st.plotly_chart(fig, width="stretch")
-    st.dataframe(order[["run", "notebook", "test_RMSE", "test_MAE", "test_R2", "n_train", "n_test", "notes"]],
+    st.dataframe(order[["run", "notebook", "test_RMSE", "test_MAE", "test_R2", "n_train", "n_test", "notes"]].rename(columns={
+                     "run": "Model", "notebook": "Notebook", "test_RMSE": "RMSE", "test_MAE": "MAE",
+                     "test_R2": "R²", "n_train": "n (train)", "n_test": "n (test)", "notes": "Notes"}),
                  hide_index=True, width="stretch")
 
-    st.subheader("What drives the best model?")
-    c = coef.reindex(coef["coef_std"].abs().sort_values().index)
+    st.subheader("Standardized Coefficients of the Best-Performing Model")
+    names = {"log_effort": "Observer effort (log)", "tavg_annual": "Mean annual temperature",
+             "tmin_winter": "Minimum winter temperature", "tmax_summer": "Mean summer maximum temperature",
+             "precip_annual": "Annual precipitation", "lat": "Latitude", "lon": "Longitude",
+             "lag_log_count": "Previous-year sightings (log)"}
+    c = coef.assign(feature=coef["feature"].map(names).fillna(coef["feature"]))
+    c = c.reindex(c["coef_std"].abs().sort_values().index)
     fig = px.bar(c, x="coef_std", y="feature", orientation="h",
                  labels={"coef_std": "Standardized coefficient (log scale)", "feature": ""})
     fig.update_layout(height=360, margin=dict(t=10))
     st.plotly_chart(fig, width="stretch")
-    st.caption("Coefficients are per one standard deviation of each feature. Temperature features are "
-               "strongly correlated with each other, so read them together rather than one at a time.")
+    st.caption("Coefficients correspond to a one-standard-deviation change in each predictor. The temperature "
+               "predictors are highly collinear, so their individual coefficients should be interpreted jointly.")
 
 # ----------------------------------------------------------------------- About
 else:
-    st.title("About this project")
+    st.title("Project Overview")
     st.markdown("""
-**Question.** How many spotted lanternfly sightings will a county report in a given year?
+**Research question.** Can the annual number of reported spotted lanternfly (*Lycorma delicatula*)
+sightings in a county be predicted from observer effort, climate, host-plant availability and
+county characteristics?
 
-**Data.** iNaturalist research-grade sightings (via GBIF), NOAA county climate, USFS forest
-inventory and GBIF host-plant records, and county features (rural–urban codes, roads, rail).
+**Data sources.** Research-grade iNaturalist observations (accessed via GBIF); NOAA nClimDiv county
+climate series; USDA Forest Service FIA inventory and GBIF records of host plants; USDA ERS
+Rural–Urban Continuum Codes; EPA Level III ecoregions; and Census TIGER road and rail networks.
 
-**Unit.** One row per county per year, eastern US, 2014–2025.
+**Unit of analysis.** County-year, eastern United States, 2014–2025.
 
-**Validation.** Train on 2015–2022, test on 2023–2025, so every score is a true forecast.
+**Validation design.** Temporal holdout: models are fitted on 2015–2022 and evaluated on 2023–2025,
+so all reported scores reflect out-of-sample forecasting performance.
 
 Source code and notebooks: [github.com/tejasreddy98/LanFly](https://github.com/tejasreddy98/LanFly)
 """)

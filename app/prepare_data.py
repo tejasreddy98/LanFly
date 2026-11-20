@@ -60,5 +60,12 @@ geo["geometry"] = geo.geometry.simplify(1500)
 geo = geo.to_crs(4326)[["fips", "geometry"]]
 geo.to_file(OUT / "counties.geojson", driver="GeoJSON", COORDINATE_PRECISION=4)
 
+# 4. Host plants per county (static): FIA forest inventory shares and GBIF Tree of Heaven sightings.
+hosts = pd.read_parquet(ds.PROCESSED / "county_hosts.parquet")[
+    ["fips", "tree_of_heaven_share", "black_walnut_share", "maple_share", "willow_share",
+     "tree_of_heaven_trees", "toh_obs", "toh_per_10k"]]
+hosts = hosts[hosts["fips"].isin(geo["fips"])]
+hosts.to_parquet(OUT / "county_hosts.parquet", index=False)
+
 for p in sorted(OUT.iterdir()):
     print(f"{p.name}: {p.stat().st_size / 1e3:,.0f} KB")
